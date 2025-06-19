@@ -4,18 +4,20 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { ArrowLeft, Search, Globe, Shield, Server, Mail, FileText, CheckCircle, XCircle } from 'lucide-react';
+import { ArrowLeft, Search, Globe, Shield, Server, Mail, FileText, CheckCircle, XCircle, AlertCircle, Info } from 'lucide-react';
 import { DNSService } from '@/services/dns';
+import { ComprehensiveDNSAnalyzer } from '@/services/comprehensive-dns';
 import { cleanDomainInput, validateDomain } from '@/lib/domain-utils';
 import DNSPropagation from '@/components/DNSPropagation';
 import ErrorDisplay from '@/components/ErrorDisplay';
-import type { DNSLookupResult, DNSRecord } from '@/types/dns';
+import type { DNSLookupResult, DNSRecord, DNSAnalysis, DNSTest } from '@/types/dns';
 
 export default function DNSLookupPage() {
   const { domain } = useParams<{ domain: string }>();
   const navigate = useNavigate();
   
   const [lookupResult, setLookupResult] = useState<DNSLookupResult | null>(null);
+  const [comprehensiveAnalysis, setComprehensiveAnalysis] = useState<DNSAnalysis | null>(null);
   const [healthCheck, setHealthCheck] = useState<any>(null);
   const [searchDomain, setSearchDomain] = useState(domain || '');
   const [isLoading, setIsLoading] = useState(false);
@@ -25,23 +27,24 @@ export default function DNSLookupPage() {
       performLookup(domain);
     }
   }, [domain]);
-
   const performLookup = async (targetDomain: string) => {
     setIsLoading(true);
     try {
-      const [dnsResult, healthResult] = await Promise.all([
+      const [dnsResult, healthResult, comprehensiveResult] = await Promise.all([
         DNSService.lookupDNS(targetDomain),
-        DNSService.performHealthCheck(targetDomain)
+        DNSService.performHealthCheck(targetDomain),
+        ComprehensiveDNSAnalyzer.performComprehensiveAnalysis(targetDomain)
       ]);
       
       setLookupResult(dnsResult);
       setHealthCheck(healthResult);
+      setComprehensiveAnalysis(comprehensiveResult);
     } catch (error) {
       console.error('Lookup failed:', error);
     } finally {
       setIsLoading(false);
     }
-  };  const handleNewSearch = (e: React.FormEvent) => {
+  };const handleNewSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (!searchDomain.trim()) return;
     
@@ -74,13 +77,95 @@ export default function DNSLookupPage() {
   const getStatusColor = (isOnline: boolean) => {
     return isOnline ? 'success' : 'destructive';
   };
-
   const formatTTL = (ttl?: number) => {
     if (!ttl) return 'N/A';
     if (ttl < 60) return `${ttl}s`;
     if (ttl < 3600) return `${Math.floor(ttl / 60)}m`;
     if (ttl < 86400) return `${Math.floor(ttl / 3600)}h`;
     return `${Math.floor(ttl / 86400)}d`;
+  };
+
+  const getTestStatusIcon = (status: string) => {
+    switch (status) {
+      case 'Pass':
+        return <CheckCircle className="h-5 w-5 text-green-500" />;
+      case 'Warn':
+        return <AlertCircle className="h-5 w-5 text-yellow-500" />;
+      case 'Error':
+        return <XCircle className="h-5 w-5 text-red-500" />;
+      default:
+        return <Info className="h-5 w-5 text-blue-500" />;
+    }
+  };
+
+  const getTestStatusBadge = (status: string) => {
+    switch (status) {
+      case 'Pass':
+        return 'success';
+      case 'Warn':
+        return 'warning';
+      case 'Error':
+        return 'destructive';
+      default:
+        return 'secondary';
+    }
+  };
+
+  const renderTestResults = (tests: DNSTest[], title: string, icon: React.ComponentType<any>) => {
+    const IconComponent = icon;
+    
+    return (
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <IconComponent className="h-5 w-5" />
+            {title}
+          </CardTitle>
+          <CardDescription>
+            {tests.length} tests performed
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            {tests.map((test, index) => (
+              <div key={index} className="border rounded-lg p-4">
+                <div className="flex items-start gap-3">
+                  {getTestStatusIcon(test.status)}
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-2">
+                      <h4 className="font-medium">{test.name}</h4>
+                      <Badge variant={getTestStatusBadge(test.status) as any}>
+                        {test.status}
+                      </Badge>
+                    </div>
+                    <p className="text-sm text-gray-600 dark:text-gray-300 mb-2">
+                      {test.description}
+                    </p>
+                    {test.details && (
+                      <p className="text-xs text-gray-500 dark:text-gray-400">
+                        {test.details}
+                      </p>
+                    )}
+                    {test.recommendations && test.recommendations.length > 0 && (
+                      <div className="mt-2">
+                        <p className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+                          Recommendations:
+                        </p>
+                        <ul className="text-xs text-gray-500 dark:text-gray-400 list-disc list-inside">
+                          {test.recommendations.map((rec, i) => (
+                            <li key={i}>{rec}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+    );
   };
   if (!domain) {
     return (
@@ -205,6 +290,181 @@ export default function DNSLookupPage() {
                   )}
                 </CardContent>
               </Card>
+            )}
+
+            {/* Comprehensive DNS Analysis */}
+            {comprehensiveAnalysis && (
+              <div className="space-y-6">
+                <div className="text-center mb-8">
+                  <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
+                    Comprehensive DNS Analysis
+                  </h2>
+                  <p className="text-gray-600 dark:text-gray-300">
+                    Deep DNS inspection similar to intoDNS.com
+                  </p>
+                </div>
+
+                {/* Parent Server Tests */}
+                {comprehensiveAnalysis.parentServers?.tests && 
+                  renderTestResults(
+                    comprehensiveAnalysis.parentServers.tests, 
+                    'Parent Server Analysis', 
+                    Server
+                  )
+                }
+
+                {/* Nameserver Tests */}
+                {comprehensiveAnalysis.nameserverTests?.tests && 
+                  renderTestResults(
+                    comprehensiveAnalysis.nameserverTests.tests, 
+                    'Nameserver Analysis', 
+                    Globe
+                  )
+                }
+
+                {/* SOA Analysis */}
+                {comprehensiveAnalysis.soaAnalysis?.tests && 
+                  renderTestResults(
+                    comprehensiveAnalysis.soaAnalysis.tests, 
+                    'SOA Record Analysis', 
+                    FileText
+                  )
+                }
+
+                {/* MX Analysis */}
+                {comprehensiveAnalysis.mxAnalysis?.tests && 
+                  renderTestResults(
+                    comprehensiveAnalysis.mxAnalysis.tests, 
+                    'Mail Server (MX) Analysis', 
+                    Mail
+                  )
+                }
+
+                {/* WWW Analysis */}
+                {comprehensiveAnalysis.wwwAnalysis?.tests && 
+                  renderTestResults(
+                    comprehensiveAnalysis.wwwAnalysis.tests, 
+                    'WWW Record Analysis', 
+                    Globe
+                  )
+                }
+
+                {/* General Tests */}
+                {comprehensiveAnalysis.generalTests && 
+                  renderTestResults(
+                    comprehensiveAnalysis.generalTests, 
+                    'General DNS Tests', 
+                    Shield
+                  )
+                }
+
+                {/* Nameserver Details */}
+                {comprehensiveAnalysis.parentServers?.nameservers && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2">
+                        <Server className="h-5 w-5" />
+                        Nameserver Details
+                      </CardTitle>
+                      <CardDescription>
+                        Authoritative nameservers for {domain}
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-4">
+                        {comprehensiveAnalysis.parentServers.nameservers.map((ns, index) => (
+                          <div key={index} className="p-4 border rounded-lg">
+                            <div className="grid md:grid-cols-3 gap-4">
+                              <div>
+                                <p className="text-sm text-gray-600 dark:text-gray-300">Hostname</p>
+                                <p className="font-mono text-sm">{ns.hostname}</p>
+                              </div>
+                              <div>
+                                <p className="text-sm text-gray-600 dark:text-gray-300">IP Addresses</p>
+                                <div className="space-y-1">
+                                  {ns.ips.map((ip, i) => (
+                                    <Badge key={i} variant="outline" className="font-mono text-xs">
+                                      {ip}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              </div>
+                              <div>
+                                <p className="text-sm text-gray-600 dark:text-gray-300">Properties</p>
+                                <div className="flex flex-wrap gap-1">
+                                  {ns.isAuthoritative && (
+                                    <Badge variant="secondary">Authoritative</Badge>
+                                  )}
+                                  {ns.respondsToTCP && (
+                                    <Badge variant="secondary">TCP</Badge>
+                                  )}
+                                  {ns.hasGlue && (
+                                    <Badge variant="secondary">Has Glue</Badge>
+                                  )}
+                                  {!ns.allowsRecursion && (
+                                    <Badge variant="success">No Recursion</Badge>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* SOA Record Details */}
+                {comprehensiveAnalysis.soaAnalysis?.record && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2">
+                        <FileText className="h-5 w-5" />
+                        SOA Record Details
+                      </CardTitle>
+                      <CardDescription>
+                        Start of Authority record information
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="grid md:grid-cols-2 gap-6">
+                        <div className="space-y-4">
+                          <div>
+                            <p className="text-sm text-gray-600 dark:text-gray-300">Primary Nameserver</p>
+                            <p className="font-mono text-sm">{comprehensiveAnalysis.soaAnalysis.record.primaryNameserver}</p>
+                          </div>
+                          <div>
+                            <p className="text-sm text-gray-600 dark:text-gray-300">Hostmaster Email</p>
+                            <p className="font-mono text-sm">{comprehensiveAnalysis.soaAnalysis.record.hostmasterEmail}</p>
+                          </div>
+                          <div>
+                            <p className="text-sm text-gray-600 dark:text-gray-300">Serial Number</p>
+                            <p className="font-mono text-sm">{comprehensiveAnalysis.soaAnalysis.record.serial}</p>
+                          </div>
+                        </div>
+                        <div className="space-y-4">
+                          <div>
+                            <p className="text-sm text-gray-600 dark:text-gray-300">Refresh Interval</p>
+                            <p className="font-mono text-sm">{comprehensiveAnalysis.soaAnalysis.record.refresh}s</p>
+                          </div>
+                          <div>
+                            <p className="text-sm text-gray-600 dark:text-gray-300">Retry Interval</p>
+                            <p className="font-mono text-sm">{comprehensiveAnalysis.soaAnalysis.record.retry}s</p>
+                          </div>
+                          <div>
+                            <p className="text-sm text-gray-600 dark:text-gray-300">Expire Time</p>
+                            <p className="font-mono text-sm">{comprehensiveAnalysis.soaAnalysis.record.expire}s</p>
+                          </div>
+                          <div>
+                            <p className="text-sm text-gray-600 dark:text-gray-300">Minimum TTL</p>
+                            <p className="font-mono text-sm">{comprehensiveAnalysis.soaAnalysis.record.minimumTTL}s</p>
+                          </div>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
             )}
 
             {/* DNS Records */}
